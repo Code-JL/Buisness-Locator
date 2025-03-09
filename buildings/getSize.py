@@ -102,22 +102,6 @@ def get_buildings_from_osm(latitude, longitude, tags, radius, timeout):
     """Wrapper for OSMnx's features_from_point with endpoint fallback"""
     return ox.features_from_point((latitude, longitude), tags, dist=radius)
 
-def get_building_usage(row, tags):
-    """Extract usage information from OSM tags in priority order"""
-    # Check for each tag type in order of importance
-    if 'shop' in row or 'shop' in tags:
-        return f"shop: {row.get('shop', tags.get('shop', ''))}"
-    elif 'amenity' in row or 'amenity' in tags:
-        return f"amenity: {row.get('amenity', tags.get('amenity', ''))}"
-    elif 'leisure' in row or 'leisure' in tags:
-        return f"leisure: {row.get('leisure', tags.get('leisure', ''))}"
-    elif 'office' in row or 'office' in tags:
-        return f"office: {row.get('office', tags.get('office', ''))}"
-    elif 'tourism' in row or 'tourism' in tags:
-        return f"tourism: {row.get('tourism', tags.get('tourism', ''))}"
-    else:
-        return ""  # No specific usage information available
-
 def get_buildings_by_size(longitude, latitude, min_sqft=0, radius=500, timeout=180, use_cache=True, worker_id=None):
     """
     Get buildings of at least min_sqft within a radius of a point using OSMnx
@@ -231,6 +215,15 @@ def get_buildings_by_size(longitude, latitude, min_sqft=0, radius=500, timeout=1
                 "country": row.get('addr:country', tags.get('addr:country', ''))
             }
             
+            # Clean up NaN values in address components
+            for key in address_components:
+                # Convert to string and check for NaN values
+                if isinstance(address_components[key], float) and np.isnan(address_components[key]):
+                    address_components[key] = ""
+                # Handle any other empty values or None
+                if not address_components[key]:
+                    address_components[key] = ""
+            
             # Construct a formatted address string
             formatted_address = ""
             if address_components["housenumber"] and address_components["street"]:
@@ -238,6 +231,7 @@ def get_buildings_by_size(longitude, latitude, min_sqft=0, radius=500, timeout=1
             elif address_components["street"]:
                 formatted_address = address_components["street"]
             
+            # Initialize address_parts as a list
             address_parts = []
             if formatted_address:
                 address_parts.append(formatted_address)
@@ -248,7 +242,16 @@ def get_buildings_by_size(longitude, latitude, min_sqft=0, radius=500, timeout=1
             if address_components["postcode"]:
                 address_parts.append(address_components["postcode"])
             
-            full_address = ", ".join(filter(None, address_parts))
+            # Make sure all parts are valid strings
+            address_parts = [str(part) for part in address_parts if part and part != "nan"]
+            
+            # Set default if no address parts are available
+            full_address = ", ".join(address_parts) if address_parts else "No address data"
+            
+            # Get building type and normalize "yes" to "nan"
+            building_type = row.get('building', tags.get('building', 'unknown'))
+            if str(building_type).lower() == "yes":
+                building_type = "nan"
             
             building_info = {
                 "id": idx[1] if isinstance(idx, tuple) else idx,  # OSM ID
@@ -256,10 +259,9 @@ def get_buildings_by_size(longitude, latitude, min_sqft=0, radius=500, timeout=1
                 "lat": lat,
                 "lon": lon,
                 "address": full_address,  # Add the formatted address
-                "building_type": row.get('building', tags.get('building', 'unknown')),
+                "building_type": building_type,
                 "name": row.get('name', tags.get('name', 'unnamed')),
-                "levels": row.get('building:levels', tags.get('building:levels', 'unknown')),
-                "usage": get_building_usage(row, tags)
+                "levels": row.get('building:levels', tags.get('building:levels', 'unknown'))
             }
             
             building_results.append(building_info)
@@ -284,6 +286,18 @@ def get_buildings_by_size(longitude, latitude, min_sqft=0, radius=500, timeout=1
         import traceback
         traceback.print_exc()
         return {"error": str(e)}
+
+def normalize_building_type(self, building_type):
+    """Normalize building type values"""
+    # Convert to string and lowercase for consistency
+    building_type = str(building_type).lower()
+    
+    # Convert "yes" to "nan" as these are buildings without a specific type
+    if building_type == "yes":
+        return "nan"
+    
+    # Return the original type for all other cases
+    return building_type
 
 def process_large_area(longitude, latitude, min_sqft=0, radius=1000, max_radius_per_batch=1000):
     """

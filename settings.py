@@ -4,6 +4,8 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QWidget)
 from PySide6.QtCore import Qt, Signal, QSettings
 from PySide6.QtGui import QIcon
+import os
+import shutil  # Add this import for directory operations
 
 class SettingsWindow(QDialog):
     """Settings window for configuring the application"""
@@ -14,7 +16,7 @@ class SettingsWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumSize(400, 500)
+        self.setMinimumSize(500, 700)
         self.setWindowIcon(QIcon("./icons/settings.png"))
         
         # Initialize QSettings
@@ -86,7 +88,52 @@ class SettingsWindow(QDialog):
         # Add the top row to the main layout
         scroll_layout.addLayout(top_row_layout)
         
-        # Spreadsheet filter group (spans full width at bottom)
+        # Create middle row for post-processing and spreadsheet filter (side by side)
+        middle_row_layout = QHBoxLayout()
+        
+        # Post-processing group
+        post_processing_group = QGroupBox("Post Processing")
+        post_processing_layout = QVBoxLayout()
+        
+        # Description label
+        post_processing_label = QLabel("Configure additional processing after search:")
+        post_processing_label.setWordWrap(True)
+        post_processing_layout.addWidget(post_processing_label)
+        
+        # Fetch missing addresses checkbox
+        self.fetch_addresses_checkbox = QCheckBox("Fetch missing addresses")
+        self.fetch_addresses_checkbox.setToolTip("Automatically look up missing addresses after search")
+        post_processing_layout.addWidget(self.fetch_addresses_checkbox)
+        
+        # Building type filter section
+        type_filter_label = QLabel("Exclude buildings by type:")
+        type_filter_label.setWordWrap(True)
+        post_processing_layout.addWidget(type_filter_label)
+        
+        # Common building types to filter
+        self.type_filter_checkboxes = {}
+        common_types = [
+            ("residential", "Residential"),
+            ("commercial", "Commercial"),
+            ("industrial", "Industrial"),
+            ("retail", "Retail"),
+            ("office", "Office"),
+            ("warehouse", "Warehouse"),
+            ("garage", "Garage"),
+            ("shed", "Shed"),
+            ("nan", "Unknown/NaN")
+        ]
+        
+        for type_key, type_name in common_types:
+            checkbox = QCheckBox(type_name)
+            checkbox.setToolTip(f"Exclude {type_name.lower()} buildings from results")
+            self.type_filter_checkboxes[type_key] = checkbox
+            post_processing_layout.addWidget(checkbox)
+        
+        post_processing_group.setLayout(post_processing_layout)
+        middle_row_layout.addWidget(post_processing_group)
+        
+        # Spreadsheet filter group
         spreadsheet_group = QGroupBox("Spreadsheet Filter")
         spreadsheet_layout = QVBoxLayout()
         
@@ -100,14 +147,13 @@ class SettingsWindow(QDialog):
         
         # Define all available columns with their default visibility
         columns = {
-            "id": ("ID", True),  
+            "id": ("ID", False),
             "sqft": ("Sq-Ft", True),
-            "levels": ("Levels", False),  # Off by default
-            "latitude": ("Latitude", False),  # Off by default
-            "longitude": ("Longitude", False),  # Off by default
+            "levels": ("Levels", False),
+            "latitude": ("Latitude", False),
+            "longitude": ("Longitude", False),
             "address": ("Address", True),
             "type": ("Type", True),
-            "usage": ("Usage", True),
             "name": ("Name", True)
         }
         
@@ -118,7 +164,27 @@ class SettingsWindow(QDialog):
             spreadsheet_layout.addWidget(checkbox)
         
         spreadsheet_group.setLayout(spreadsheet_layout)
-        scroll_layout.addWidget(spreadsheet_group)
+        middle_row_layout.addWidget(spreadsheet_group)
+        
+        # Add the middle row to the main layout
+        scroll_layout.addLayout(middle_row_layout)
+        
+        # Add a clear cache group (bottom section)
+        cache_group = QGroupBox("Cache Management")
+        cache_layout = QVBoxLayout()
+        
+        # Description label
+        cache_label = QLabel("Clear the local cache to fetch fresh data from OpenStreetMap. This can help if you're experiencing data issues.")
+        cache_label.setWordWrap(True)
+        cache_layout.addWidget(cache_label)
+        
+        # Clear cache button
+        self.clear_cache_button = QPushButton("Clear OSM Cache")
+        self.clear_cache_button.clicked.connect(self.clear_osm_cache)
+        cache_layout.addWidget(self.clear_cache_button)
+        
+        cache_group.setLayout(cache_layout)
+        scroll_layout.addWidget(cache_group)
         
         # Set the scroll content and add to main layout
         scroll_area.setWidget(scroll_content)
@@ -146,13 +212,20 @@ class SettingsWindow(QDialog):
     
     def apply_stylesheet(self):
         """Apply dark mode stylesheet to the settings window"""
-        self.setStyleSheet("""
-            QDialog {
+        
+        # Get theme colors from QSettings
+        settings = QSettings("BuildingSizeFinder", "BuildingSizeFinder")
+        accent_color = settings.value("theme/accent_color", "#4a86e8")
+        accent_hover = settings.value("theme/accent_hover", "#5a96f8")
+        accent_pressed = settings.value("theme/accent_pressed", "#3a76d8")
+        
+        self.setStyleSheet(f"""
+            QDialog {{
                 background-color: #2d2d2d;
                 color: #e0e0e0;
-            }
+            }}
             
-            QGroupBox {
+            QGroupBox {{
                 color: #e0e0e0;
                 font-weight: bold;
                 border: 1px solid #555555;
@@ -160,81 +233,81 @@ class SettingsWindow(QDialog):
                 margin-top: 10px;
                 padding-top: 10px;
                 background-color: #333333;
-            }
+            }}
             
-            QGroupBox::title {
+            QGroupBox::title {{
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px;
                 background-color: #333333;
-            }
+            }}
             
-            QRadioButton, QCheckBox {
+            QRadioButton, QCheckBox {{
                 color: #e0e0e0;
                 background-color: transparent;
                 padding: 4px;
-            }
+            }}
             
-            QRadioButton::indicator {
+            QRadioButton::indicator {{
                 width: 13px;
                 height: 13px;
-            }
+            }}
             
-            QRadioButton::indicator:checked {
-                background-color: #4a86e8;
+            QRadioButton::indicator:checked {{
+                background-color: {accent_color};
                 border: 2px solid #e0e0e0;
                 border-radius: 7px;
-            }
+            }}
             
-            QRadioButton::indicator:unchecked {
+            QRadioButton::indicator:unchecked {{
                 background-color: #2d2d2d;
                 border: 2px solid #e0e0e0;
                 border-radius: 7px;
-            }
+            }}
             
-            QCheckBox::indicator {
+            QCheckBox::indicator {{
                 width: 13px;
                 height: 13px;
-            }
+            }}
             
-            QCheckBox::indicator:checked {
-                background-color: #4a86e8;
+            QCheckBox::indicator:checked {{
+                background-color: {accent_color};
                 border: 2px solid #e0e0e0;
                 border-radius: 3px;
-            }
+            }}
             
-            QCheckBox::indicator:unchecked {
+            QCheckBox::indicator:unchecked {{
                 background-color: #2d2d2d;
                 border: 2px solid #e0e0e0;
                 border-radius: 3px;
-            }
+            }}
             
-            QLabel {
+            QLabel {{
                 color: #e0e0e0;
                 background-color: transparent;
-            }
+            }}
             
-            QPushButton {
-                background-color: #4a86e8;
+            QPushButton {{
+                background-color: {accent_color};
                 color: white;
                 border: none;
                 border-radius: 4px;
                 padding: 8px 16px;
                 font-weight: bold;
-            }
+            }}
             
-            QPushButton:hover {
-                background-color: #5a96f8;
-            }
+            QPushButton:hover {{
+                background-color: {accent_hover};
+            }}
             
-            QPushButton:pressed {
-                background-color: #3a76d8;
-            }
+            QPushButton:pressed {{
+                background-color: {accent_pressed};
+            }}
             
-            QScrollArea {
+            QScrollArea {{
                 border: none;
                 background-color: #2d2d2d;
-            }
+            }}
         """)
     
     def save_settings(self):
@@ -256,6 +329,13 @@ class SettingsWindow(QDialog):
         # Save column visibility settings
         for column_key, checkbox in self.column_checkboxes.items():
             self.qsettings.setValue(f"column_visible_{column_key}", checkbox.isChecked())
+        
+        # Save post-processing settings
+        self.qsettings.setValue("fetch_missing_addresses", self.fetch_addresses_checkbox.isChecked())
+        
+        # Save building type filters
+        for type_key, checkbox in self.type_filter_checkboxes.items():
+            self.qsettings.setValue(f"exclude_building_type_{type_key}", checkbox.isChecked())
         
         # Emit signal to notify main window
         self.settings_changed.emit()
@@ -295,14 +375,13 @@ class SettingsWindow(QDialog):
         
         # Load column visibility settings
         columns_default = {
-            "id": True,  
+            "id": False,
             "sqft": True,
-            "levels": False,  # Off by default
-            "latitude": False,  # Off by default
-            "longitude": False,  # Off by default
+            "levels": False,
+            "latitude": False,
+            "longitude": False,
             "address": True,
             "type": True,
-            "usage": True,
             "name": True
         }
         
@@ -311,9 +390,91 @@ class SettingsWindow(QDialog):
                                              columns_default.get(column_key, True), 
                                              bool)
             checkbox.setChecked(is_visible)
+        
+        # Load post-processing settings (default to true for backward compatibility)
+        fetch_addresses = self.qsettings.value("fetch_missing_addresses", True, bool)
+        self.fetch_addresses_checkbox.setChecked(fetch_addresses)
+        
+        # Load building type filters (default to false - don't exclude anything by default)
+        for type_key, checkbox in self.type_filter_checkboxes.items():
+            exclude_type = self.qsettings.value(f"exclude_building_type_{type_key}", False, bool)
+            checkbox.setChecked(exclude_type)
     
     @staticmethod
     def get_location_type():
         """Get the current location type setting"""
         settings = QSettings("BuildingSizeFinder", "BuildingSizeFinder")
         return settings.value("location_type", 0, int)
+
+    def clear_osm_cache(self):
+        """Clear the entire cache folder, not just osmnx subfolder"""
+        try:
+            # Use absolute path to the entire cache directory
+            cache_folder = os.path.abspath('./cache')
+            print(f"Attempting to clear cache at: {cache_folder}")
+            
+            # Check if the directory exists
+            if os.path.exists(cache_folder):
+                # Count files before deletion for verification
+                file_count = sum(len(files) for _, _, files in os.walk(cache_folder))
+                print(f"Found {file_count} items to delete")
+                
+                # Use shutil.rmtree to remove the entire directory and recreate it
+                try:
+                    shutil.rmtree(cache_folder)
+                    # Recreate main cache directory
+                    os.makedirs(cache_folder, exist_ok=True)
+                    # Also recreate the osmnx subfolder
+                    os.makedirs(os.path.join(cache_folder, 'osmnx'), exist_ok=True)
+                    print(f"Removed and recreated cache directory")
+                    
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.information(self, "Cache Cleared", 
+                                          f"Successfully cleared {file_count} cached items.\n\n"
+                                          f"New searches will fetch fresh data.")
+                except Exception as e:
+                    print(f"Failed to remove directory: {e}")
+                    
+                    # Alternative approach: delete files individually if rmtree failed
+                    success_count = 0
+                    error_files = []
+                    
+                    for root, dirs, files in os.walk(cache_folder, topdown=False):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            try:
+                                os.unlink(file_path)
+                                success_count += 1
+                            except Exception as e:
+                                error_files.append(file)
+                                print(f"Failed to delete {file_path}: {e}")
+                        
+                        for dir in dirs:
+                            dir_path = os.path.join(root, dir)
+                            try:
+                                os.rmdir(dir_path)
+                            except Exception as e:
+                                print(f"Failed to delete directory {dir_path}: {e}")
+                    
+                    from PySide6.QtWidgets import QMessageBox
+                    if success_count > 0:
+                        QMessageBox.information(self, "Partial Cache Clear", 
+                                              f"Cleared {success_count} of {file_count} cached items.\n\n"
+                                              f"Some files could not be deleted: {', '.join(error_files[:5])}"
+                                              f"{' and more...' if len(error_files) > 5 else ''}")
+                    else:
+                        QMessageBox.warning(self, "Cache Clear Failed", 
+                                           f"Could not clear cache files. They may be in use.\n\n"
+                                           f"Try closing any other instances of the app and try again.")
+            else:
+                # Create directory if it doesn't exist
+                os.makedirs(cache_folder, exist_ok=True)
+                os.makedirs(os.path.join(cache_folder, 'osmnx'), exist_ok=True)
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "No Cache Found", 
+                                       f"No cache directory found at {cache_folder}.\n"
+                                       f"A new one has been created.")
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Error", f"Failed to clear cache: {str(e)}")
+            print(f"Cache clear exception: {e}")

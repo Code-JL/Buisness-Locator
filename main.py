@@ -1,9 +1,10 @@
 import sys
 import os
+import webbrowser  # Add this import for opening URLs
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                               QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, 
                               QHeaderView, QSpinBox, QDoubleSpinBox, QProgressBar, QMessageBox,
-                              QSplitter, QGroupBox, QFormLayout, QToolBar, QComboBox, QSizePolicy)
+                              QSplitter, QGroupBox, QFormLayout, QToolBar, QComboBox, QSizePolicy, QDialog)
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QSettings, QSize
 from PySide6.QtGui import QIcon, QFont, QColor, QAction
 
@@ -17,6 +18,8 @@ import pgeocode
 import time
 from geopy.geocoders import Nominatim
 import pandas as pd
+from threading import Timer
+from theme import ThemeWindow
 
 class BuildingSearchWorker(QThread):
     """Worker thread to run the building search without freezing the UI"""
@@ -49,6 +52,9 @@ class BuildingSizeFinderApp(QMainWindow):
         
         # Load settings
         self.settings = QSettings("BuildingSizeFinder", "BuildingSizeFinder")
+        
+        # Load theme colors
+        self.load_theme_colors()
         
         # Restore window geometry from settings
         self.restoreGeometry(self.settings.value("windowGeometry", b""))
@@ -89,13 +95,44 @@ class BuildingSizeFinderApp(QMainWindow):
         self.form_group.setLayout(self.form_layout)
         top_layout.addWidget(self.form_group)
         
+        # Create button layout for search and location buttons
+        button_layout = QHBoxLayout()
+        
         # Search button
         self.search_button = QPushButton("Search")
         self.search_button.setFixedHeight(40)
         self.search_button.clicked.connect(self.start_search)
-        top_layout.addWidget(self.search_button)
+        button_layout.addWidget(self.search_button)
         
-        # Status display
+        # Location button that opens Google Maps
+        location_button = QPushButton()
+        
+        # Create a white icon by loading and coloring the SVG
+        icon = QIcon("./svg/location.svg")
+        
+        # Set the white icon to the button
+        location_button.setIcon(icon)
+        location_button.setToolTip("Open location in Google Maps")
+        location_button.clicked.connect(self.open_in_google_maps)
+        location_button.setFixedSize(40, 40)
+        location_button.setIconSize(QSize(24, 24))
+        location_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.accent_color};
+                border-radius: 20px;
+                padding: 6px;
+                color: white;
+            }}
+            QPushButton:hover {{
+                background-color: {self.accent_hover};
+            }}
+        """)
+        button_layout.addWidget(location_button)
+        
+        # Add the button layout to the main layout
+        top_layout.addLayout(button_layout)
+        
+        # Status display (should appear below buttons now)
         self.status_label = QLabel("Ready")
         self.status_label.setAlignment(Qt.AlignCenter)
         top_layout.addWidget(self.status_label)
@@ -127,9 +164,9 @@ class BuildingSizeFinderApp(QMainWindow):
         
         # Results table
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(9)
+        self.results_table.setColumnCount(8)
         self.results_table.setHorizontalHeaderLabels([
-            "ID", "Sq-Ft", "Levels", "Latitude", "Longitude", "Address", "Type", "Usage", "Name"
+            "ID", "Sq-Ft", "Levels", "Latitude", "Longitude", "Address", "Type", "Name"
         ])
         
         # Store column indexes for easier reference
@@ -141,8 +178,7 @@ class BuildingSizeFinderApp(QMainWindow):
             "longitude": 4,
             "address": 5,
             "type": 6,
-            "usage": 7,
-            "name": 8
+            "name": 7
         }
         
         # Apply column visibility based on settings
@@ -350,15 +386,26 @@ class BuildingSizeFinderApp(QMainWindow):
             }
         """)
     
+    def load_theme_colors(self):
+        """Load theme colors from settings"""
+        # Define accent colors (with defaults)
+        self.accent_color = self.settings.value("theme/accent_color", "#4a86e8")
+        self.accent_hover = self.settings.value("theme/accent_hover", "#5a96f8")
+        self.accent_pressed = self.settings.value("theme/accent_pressed", "#3a76d8")
+    
     def create_toolbar(self):
-        """Create the toolbar with settings icon"""
+        """Create the toolbar with settings and theme icons"""
         toolbar = QToolBar("Settings")
         toolbar.setObjectName("settingsToolbar")
         toolbar.setIconSize(QSize(24, 24))
         
-        # Create spacer to push settings icon to the right
+        # Create spacer to push icons to the right
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        
+        # Create theme action
+        theme_action = QAction(QIcon("./icons/theme.png"), "Theme", self)
+        theme_action.triggered.connect(self.show_theme)
         
         # Create settings action
         settings_action = QAction(QIcon("./icons/settings.png"), "Settings", self)
@@ -366,9 +413,253 @@ class BuildingSizeFinderApp(QMainWindow):
         
         # Add widgets to toolbar
         toolbar.addWidget(spacer)
+        toolbar.addAction(theme_action)
         toolbar.addAction(settings_action)
         
         self.addToolBar(toolbar)
+    
+    def show_theme(self):
+        """Show the theme dialog"""
+        theme_dialog = ThemeWindow(self)
+        theme_dialog.theme_changed.connect(self.on_theme_changed)
+        theme_dialog.exec()
+    
+    def on_theme_changed(self):
+        """Handle theme changes"""
+        # Reload theme colors
+        self.load_theme_colors()
+        
+        # Update application stylesheet
+        self.update_stylesheet()
+        
+        # Update any specific styled elements
+        self.update_styled_elements()
+        
+        # If settings window is open, update its stylesheet too
+        for child in self.findChildren(QDialog):
+            if hasattr(child, 'apply_stylesheet'):
+                child.apply_stylesheet()
+    
+    def update_stylesheet(self):
+        """Update the application stylesheet with new theme colors"""
+        # Apply the same stylesheet but with updated colors
+        self.setStyleSheet(f"""
+            /* Main application background */
+            QMainWindow, QWidget {{
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+            }}
+            
+            /* Form elements */
+            QLabel {{
+                color: #e0e0e0;
+                background-color: transparent;
+            }}
+            
+            QGroupBox {{
+                color: #e0e0e0;
+                font-weight: bold;
+                border: 1px solid #555555;
+                border-radius: 6px;
+                margin-top: 10px;
+                padding-top: 10px;
+                background-color: #333333;
+            }}
+            
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+                background-color: #333333;
+            }}
+            
+            /* Input fields */
+            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
+                background-color: #3d3d3d;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+                border-radius: 3px;
+                padding: 4px;
+                selection-background-color: {self.accent_color};
+            }}
+            
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 15px;
+                border-left-width: 1px;
+                border-left-color: #555555;
+                border-left-style: solid;
+                border-top-right-radius: 3px;
+                border-bottom-right-radius: 3px;
+            }}
+            
+            QComboBox::down-arrow {{
+                width: 10px;
+                height: 10px;
+                background: #e0e0e0;
+            }}
+            
+            QComboBox QAbstractItemView {{
+                border: 1px solid #555555;
+                selection-background-color: {self.accent_color};
+                background-color: #3d3d3d;
+                color: #e0e0e0;
+            }}
+            
+            /* Buttons */
+            QPushButton {{
+                background-color: {self.accent_color};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }}
+            
+            QPushButton:hover {{
+                background-color: {self.accent_hover};
+            }}
+            
+            QPushButton:pressed {{
+                background-color: {self.accent_pressed};
+            }}
+            
+            QPushButton:disabled {{
+                background-color: #555555;
+                color: #888888;
+            }}
+            
+            /* Table styling */
+            QTableWidget {{
+                background-color: #2d2d2d;
+                alternate-background-color: #353535;
+                color: #e0e0e0;
+                gridline-color: #555555;
+                border: 1px solid #555555;
+                border-radius: 3px;
+            }}
+            
+            QTableWidget::item {{
+                padding: 4px;
+                border: none;
+            }}
+            
+            QTableWidget::item:selected {{
+                background-color: {self.accent_color};
+                color: white;
+            }}
+            
+            QHeaderView::section {{
+                background-color: #3d3d3d;
+                color: #e0e0e0;
+                padding: 5px;
+                border: 1px solid #555555;
+                font-weight: bold;
+            }}
+            
+            /* Scrollbars */
+            QScrollBar:vertical, QScrollBar:horizontal {{
+                background-color: #2d2d2d;
+                border: none;
+                width: 12px;
+                height: 12px;
+            }}
+            
+            QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
+                background-color: #555555;
+                border-radius: 6px;
+                min-height: 20px;
+            }}
+            
+            QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{
+                background-color: #666666;
+            }}
+            
+            /* Progress bar */
+            QProgressBar {{
+                border: 1px solid #555555;
+                border-radius: 3px;
+                background-color: #3d3d3d;
+                text-align: center;
+                color: #e0e0e0;
+            }}
+            
+            QProgressBar::chunk {{
+                background-color: {self.accent_color};
+                width: 10px;
+            }}
+            
+            /* Splitter */
+            QSplitter::handle {{
+                background-color: #555555;
+            }}
+            
+            QSplitter::handle:horizontal {{
+                width: 2px;
+            }}
+            
+            QSplitter::handle:vertical {{
+                height: 2px;
+            }}
+            
+            /* Toolbar */
+            QToolBar {{
+                background-color: #333333;
+                border: none;
+                spacing: 3px;
+            }}
+            
+            QToolButton {{
+                background-color: transparent;
+                border: none;
+                border-radius: 3px;
+                padding: 5px;
+            }}
+            
+            QToolButton:hover {{
+                background-color: #4a4a4a;
+            }}
+            
+            QToolButton:pressed {{
+                background-color: #555555;
+            }}
+        """)
+    
+    def update_styled_elements(self):
+        """Update any individually styled elements"""
+        # Update location button style if it exists
+        if hasattr(self, 'location_button'):
+            self.location_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {self.accent_color};
+                    border-radius: 20px;
+                    padding: 6px;
+                    color: white;
+                }}
+                QPushButton:hover {{
+                    background-color: {self.accent_hover};
+                }}
+            """)
+        
+        # Update search button style if it exists
+        if hasattr(self, 'search_button'):
+            self.search_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {self.accent_color};
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{
+                    background-color: {self.accent_hover};
+                }}
+                QPushButton:pressed {{
+                    background-color: {self.accent_pressed};
+                }}
+            """)
     
     def show_settings(self):
         """Show the settings dialog"""
@@ -421,11 +712,29 @@ class BuildingSizeFinderApp(QMainWindow):
         elif location_type == 1:  # Postal/Zip Code
             # Country input
             self.country_input = QComboBox()
+            self.country_input.blockSignals(True)  # Block signals during setup
+            
             # Only include US and Canada with full names
             self.country_input.addItem("United States", "US")
             self.country_input.addItem("Canada", "CA")
-            # Set default to United States
-            self.country_input.setCurrentIndex(0)
+            
+            # Get saved country code directly from settings
+            saved_country = self.settings.value("selected_country", "US", str)
+            
+            # Print debug info
+            print(f"Loading country selection: {saved_country}")
+            
+            # Set the selection based on saved country
+            if saved_country == "CA":
+                self.country_input.setCurrentIndex(1)
+            else:
+                self.country_input.setCurrentIndex(0)
+                
+            self.country_input.blockSignals(False)  # Unblock signals after setup
+            
+            # Connect signal to save country selection when changed
+            self.country_input.currentIndexChanged.connect(self.save_country_selection)
+            
             self.form_layout.addRow("Country:", self.country_input)
             
             # Postal code input
@@ -436,11 +745,29 @@ class BuildingSizeFinderApp(QMainWindow):
         elif location_type == 2:  # City
             # Country input
             self.country_input = QComboBox()
+            self.country_input.blockSignals(True)  # Block signals during setup
+            
             # Only include US and Canada with full names
             self.country_input.addItem("United States", "US")
             self.country_input.addItem("Canada", "CA")
-            # Set default to United States
-            self.country_input.setCurrentIndex(0)
+            
+            # Get saved country code directly from settings
+            saved_country = self.settings.value("selected_country", "US", str)
+            
+            # Print debug info
+            print(f"Loading country selection: {saved_country}")
+            
+            # Set the selection based on saved country
+            if saved_country == "CA":
+                self.country_input.setCurrentIndex(1)
+            else:
+                self.country_input.setCurrentIndex(0)
+                
+            self.country_input.blockSignals(False)  # Unblock signals after setup
+            
+            # Connect signal to save country selection when changed
+            self.country_input.currentIndexChanged.connect(self.save_country_selection)
+            
             self.form_layout.addRow("Country:", self.country_input)
             
             # State/Province input
@@ -484,7 +811,19 @@ class BuildingSizeFinderApp(QMainWindow):
             self.radius_input.setSingleStep(100)
             self.radius_input.setValue(current_radius)
         
+        # Add the radius input directly (without the location button)
         self.form_layout.addRow(f"Radius ({unit_label}):", self.radius_input)
+    
+    def save_country_selection(self, index):
+        """Save the selected country to settings"""
+        country_code = self.country_input.itemData(index)
+        
+        # Print debug info
+        print(f"Saving country selection: {country_code}, index: {index}")
+        
+        # Explicitly save as string
+        self.settings.setValue("selected_country", str(country_code))
+        self.settings.sync()
     
     def get_coordinates(self):
         """Get coordinates based on current location type"""
@@ -494,12 +833,24 @@ class BuildingSizeFinderApp(QMainWindow):
             return self.longitude_input.value(), self.latitude_input.value()
             
         elif location_type == 1:  # Postal/Zip Code
-            # Get country code from userData (not display text)
-            country = self.country_input.currentData()
-            postal_code = self.postal_input.text().strip()
+            # Get country code directly from current index
+            country_index = self.country_input.currentIndex()
+            country = "US" if country_index == 0 else "CA"
+            
+            # Save country selection
+            self.settings.setValue("selected_country", country)
+            self.settings.sync()
+            
+            postal_code = self.postal_input.text().strip().upper()
             
             if not postal_code:
                 raise ValueError("Please enter a postal/zip code")
+            
+            # Format Canadian postal codes correctly (add space if missing)
+            if country == "CA" and len(postal_code) == 6 and " " not in postal_code:
+                # Canadian format is "A1A 1A1" - insert space after 3rd character
+                postal_code = postal_code[:3] + " " + postal_code[3:]
+                self.status_label.setText(f"Formatted Canadian postal code to: {postal_code}")
             
             # Try pgeocode first (faster)
             try:
@@ -508,7 +859,7 @@ class BuildingSizeFinderApp(QMainWindow):
                 
                 # Check if pgeocode found valid coordinates
                 if not pd.isna(result['latitude']) and not pd.isna(result['longitude']):
-                    self.status_label.setText("Using pgeocode result")
+                    self.status_label.setText(f"Using pgeocode result for {country}")
                     return result['longitude'], result['latitude']
                     
                 # If pgeocode failed, try Nominatim as fallback
@@ -532,7 +883,16 @@ class BuildingSizeFinderApp(QMainWindow):
                 raise ValueError(f"Error geocoding postal code: {str(e)}")
             
         elif location_type == 2:  # City
-            # Get full country name for query
+            # FIXED: Get country code directly from current index to avoid type issues
+            country_index = self.country_input.currentIndex()
+            country_code = "US" if country_index == 0 else "CA"
+            
+            self.settings.setValue("selected_country", country_code)
+            self.settings.sync()
+            
+            # Print for debugging
+            print(f"Using country for city search: {country_code}")
+            
             country_name = self.country_input.currentText()
             state = self.state_input.text().strip()
             city = self.city_input.text().strip()
@@ -610,7 +970,7 @@ class BuildingSizeFinderApp(QMainWindow):
         if "error" in result:
             self.status_label.setText(f"Error: {result['error']}")
             self.results_count.setText("Search failed")
-            QMessageBox.critical(self, "Error", f"Search failed: {result['error']}")
+            QMessageBox.warning(self, "Error", f"Search failed: {result['error']}")
             return
         
         # Update status
@@ -619,10 +979,19 @@ class BuildingSizeFinderApp(QMainWindow):
         self.status_label.setText("Search completed")
         self.results_count.setText(f"Found {total} buildings")
         
-        # Populate table
-        self.results_table.setRowCount(total)
+        # Store buildings list for later use
+        self.buildings = buildings
         
-        for row, building in enumerate(buildings):
+        # Apply building type filters
+        self.apply_building_type_filters()
+        
+        # Populate table
+        self.results_table.setRowCount(len(self.buildings))
+        
+        # Track buildings without address data
+        self.missing_addresses = []
+        
+        for row, building in enumerate(self.buildings):
             # ID
             id_item = QTableWidgetItem(str(building["id"]))
             self.results_table.setItem(row, self.column_indexes["id"], id_item)
@@ -648,23 +1017,28 @@ class BuildingSizeFinderApp(QMainWindow):
             self.results_table.setItem(row, self.column_indexes["longitude"], lon_item)
             
             # Address (now column 5 instead of 4)
-            address_item = QTableWidgetItem(building.get("address", ""))
+            address = building.get("address", "")
+            address_item = QTableWidgetItem(address)
             self.results_table.setItem(row, self.column_indexes["address"], address_item)
+            
+            # Track buildings with missing addresses
+            if not address or address == "No address data":
+                self.missing_addresses.append({
+                    "row": row,
+                    "lat": building['lat'],
+                    "lon": building['lon']
+                })
             
             # Building Type (now column 6 instead of 5)
             type_item = QTableWidgetItem(str(building.get("building_type", "unknown")))
             self.results_table.setItem(row, self.column_indexes["type"], type_item)
             
-            # Usage (new column 7)
-            usage_item = QTableWidgetItem(building.get("usage", ""))
-            self.results_table.setItem(row, self.column_indexes["usage"], usage_item)
-            
-            # Name (now column 8 instead of 7)
+            # Name (now column 7 instead of 8)
             name_item = QTableWidgetItem(str(building.get("name", "unnamed")))
             self.results_table.setItem(row, self.column_indexes["name"], name_item)
             
             # Apply alternating row colors
-            for col in range(9):  # Updated from 8 to 9 columns
+            for col in range(8):  # Updated from 9 to 8 columns
                 item = self.results_table.item(row, col)
                 if row % 2 == 0:
                     item.setBackground(QColor("#353535"))  # Dark mode alternating color
@@ -673,6 +1047,114 @@ class BuildingSizeFinderApp(QMainWindow):
         
         # Auto resize rows for better appearance
         self.results_table.resizeRowsToContents()
+        
+        # If there are buildings with missing addresses and the setting is enabled, fetch them
+        fetch_addresses = self.settings.value("fetch_missing_addresses", True, bool)
+        if fetch_addresses and self.missing_addresses and len(self.missing_addresses) <= 50:
+            self.status_label.setText(f"Finding addresses for {len(self.missing_addresses)} buildings...")
+            self.fetch_missing_addresses()
+    
+    def fetch_missing_addresses(self):
+        """Fetch missing addresses in a background process with rate limiting"""
+        if not self.missing_addresses:
+            self.status_label.setText("All addresses retrieved")
+            return
+        
+        # Get the next building with missing address
+        building_info = self.missing_addresses.pop(0)
+        
+        # Set up geocoder
+        geolocator = Nominatim(user_agent="BuildingLocator")
+        
+        try:
+            # Reverse geocode with structured address format
+            location = geolocator.reverse(
+                f"{building_info['lat']}, {building_info['lon']}",
+                exactly_one=True,
+                addressdetails=True  # Request structured address details
+            )
+            
+            if location:
+                # Format the address to be consistent with initial results
+                formatted_address = self.format_address(location)
+                
+                # Update the table
+                address_item = QTableWidgetItem(formatted_address)
+                self.results_table.setItem(building_info['row'], self.column_indexes["address"], address_item)
+                
+                # Update stored building data
+                if hasattr(self, 'buildings') and building_info['row'] < len(self.buildings):
+                    self.buildings[building_info['row']]['address'] = formatted_address
+        except Exception as e:
+            print(f"Error retrieving address: {e}")
+        
+        # Update status
+        remaining = len(self.missing_addresses)
+        self.status_label.setText(f"Finding addresses: {remaining} remaining...")
+        
+        # Schedule the next request with delay to respect rate limits (1 second)
+        if remaining > 0:
+            Timer(1.0, self.fetch_missing_addresses).start()
+        else:
+            self.status_label.setText("All addresses retrieved")
+
+    def format_address(self, location):
+        """Format address consistently from Nominatim location object"""
+        if not location:
+            return "No address data"
+        
+        # If we have raw address details, use them for consistent formatting
+        if hasattr(location, 'raw') and 'address' in location.raw:
+            address_parts = []
+            address_data = location.raw['address']
+            
+            # Build address in a consistent order
+            # First add building-specific information
+            if 'house_number' in address_data:
+                address_parts.append(address_data['house_number'])
+            
+            # Add street
+            if 'road' in address_data:
+                address_parts.append(address_data['road'])
+            elif 'pedestrian' in address_data:
+                address_parts.append(address_data['pedestrian'])
+            elif 'footway' in address_data:
+                address_parts.append(address_data['footway'])
+            
+            # Add neighborhood/suburb
+            if 'suburb' in address_data:
+                address_parts.append(address_data['suburb'])
+            elif 'neighbourhood' in address_data:
+                address_parts.append(address_data['neighbourhood'])
+            
+            # Add city/town
+            if 'city' in address_data:
+                address_parts.append(address_data['city'])
+            elif 'town' in address_data:
+                address_parts.append(address_data['town'])
+            elif 'village' in address_data:
+                address_parts.append(address_data['village'])
+            
+            # Add state/province
+            if 'state' in address_data:
+                address_parts.append(address_data['state'])
+            elif 'province' in address_data:
+                address_parts.append(address_data['province'])
+            
+            # Add postal code
+            if 'postcode' in address_data:
+                address_parts.append(address_data['postcode'])
+            
+            # Add country
+            if 'country' in address_data:
+                address_parts.append(address_data['country'])
+            
+            # Join all parts with commas
+            if address_parts:
+                return ", ".join(address_parts)
+        
+        # Fallback to the full address string if structured data isn't available
+        return location.address if hasattr(location, 'address') else "No address data"
 
     def closeEvent(self, event):
         """Save window state and geometry when closing"""
@@ -735,14 +1217,13 @@ class BuildingSizeFinderApp(QMainWindow):
     def apply_column_visibility(self):
         """Apply column visibility settings from QSettings"""
         columns_default = {
-            "id": True,  
+            "id": False,
             "sqft": True,
             "levels": False,  # Off by default
             "latitude": False,  # Off by default
             "longitude": False,  # Off by default
             "address": True,
             "type": True,
-            "usage": True,
             "name": True
         }
         
@@ -778,8 +1259,7 @@ class BuildingSizeFinderApp(QMainWindow):
             4: 11,  # Longitude
             5: 22,  # Address
             6: 9,   # Type
-            7: 12,  # Usage
-            8: 10   # Name
+            7: 12   # Name
         }
         
         # Calculate total weight of visible columns
@@ -798,6 +1278,86 @@ class BuildingSizeFinderApp(QMainWindow):
         
         # Update column widths with new percentages
         self.update_column_widths()
+
+    def open_in_google_maps(self):
+        """Open the current location in Google Maps"""
+        try:
+            # Get coordinates from the current location inputs
+            longitude, latitude = self.get_coordinates()
+            
+            # Create Google Maps URL using the API format
+            maps_url = f"https://www.google.com/maps/search/?api=1&query={latitude},{longitude}"
+            
+            # Open in web browser
+            webbrowser.open(maps_url)
+            
+            self.status_label.setText("Opened location in Google Maps")
+        except Exception as e:
+            QMessageBox.warning(self, "Location Error", f"Could not open maps: {str(e)}")
+
+    def change_location_type(self, type_index):
+        """Change the location input type and update the UI"""
+        # FIXED: Save current values including current country selection
+        if hasattr(self, 'country_input'):
+            country_index = self.country_input.currentIndex()
+            country_code = "US" if country_index == 0 else "CA"
+            self.settings.setValue("selected_country", country_code)
+            print(f"Saving country selection during type change: {country_code}")
+        
+        self.save_current_values()
+        
+        # Save the location type
+        self.settings.setValue("location_type", type_index)
+        self.settings.sync()
+        
+        # Update the UI
+        self.create_location_inputs()
+
+    def apply_building_type_filters(self):
+        """Filter out buildings based on type settings"""
+        if not hasattr(self, 'buildings') or not self.buildings:
+            return
+        
+        # Get excluded building types from settings
+        excluded_types = []
+        for type_key in ["residential", "commercial", "industrial", "retail", 
+                         "office", "warehouse", "garage", "shed", "nan"]:
+            if self.settings.value(f"exclude_building_type_{type_key}", False, bool):
+                excluded_types.append(type_key)
+        
+        # If no types are excluded, return early
+        if not excluded_types:
+            return
+        
+        # Filter buildings
+        filtered_buildings = []
+        excluded_count = 0
+        
+        for building in self.buildings:
+            building_type = str(building.get("building_type", "")).lower()
+            
+            # Special case for NaN/unknown/yes
+            if (building_type in ["", "unknown", "nan", "none", "yes"] or building_type == "nan") and "nan" in excluded_types:
+                excluded_count += 1
+                continue
+            
+            # Check if this building type should be excluded
+            exclude = False
+            for excluded_type in excluded_types:
+                if excluded_type != "nan" and excluded_type in building_type:
+                    exclude = True
+                    excluded_count += 1
+                    break
+            
+            if not exclude:
+                filtered_buildings.append(building)
+        
+        # Update buildings list
+        self.buildings = filtered_buildings
+        
+        # Update status
+        if excluded_count > 0:
+            self.status_label.setText(f"Excluded {excluded_count} buildings based on type filters")
 
 def main():
     app = QApplication(sys.argv)
