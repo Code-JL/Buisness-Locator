@@ -226,11 +226,15 @@ def get_buildings_by_size(longitude, latitude, min_sqft=0, radius=500, timeout=1
             
             # Construct a formatted address string
             formatted_address = ""
+            has_street_info = False
+
             if address_components["housenumber"] and address_components["street"]:
                 formatted_address = f"{address_components['housenumber']} {address_components['street']}"
+                has_street_info = True
             elif address_components["street"]:
                 formatted_address = address_components["street"]
-            
+                has_street_info = True
+
             # Initialize address_parts as a list
             address_parts = []
             if formatted_address:
@@ -241,12 +245,16 @@ def get_buildings_by_size(longitude, latitude, min_sqft=0, radius=500, timeout=1
                 address_parts.append(address_components["state"])
             if address_components["postcode"]:
                 address_parts.append(address_components["postcode"])
-            
+
             # Make sure all parts are valid strings
             address_parts = [str(part) for part in address_parts if part and part != "nan"]
-            
+
             # Set default if no address parts are available
             full_address = ", ".join(address_parts) if address_parts else "No address data"
+
+            # Add a flag to indicate if this address is missing street information
+            # This makes it easy to identify in the main app
+            has_complete_address = has_street_info and address_components["city"]
             
             # Get building type and normalize "yes" to "nan"
             building_type = row.get('building', tags.get('building', 'unknown'))
@@ -259,6 +267,7 @@ def get_buildings_by_size(longitude, latitude, min_sqft=0, radius=500, timeout=1
                 "lat": lat,
                 "lon": lon,
                 "address": full_address,  # Add the formatted address
+                "has_complete_address": has_complete_address,  # Add the flag
                 "building_type": building_type,
                 "name": row.get('name', tags.get('name', 'unnamed')),
                 "levels": row.get('building:levels', tags.get('building:levels', 'unknown'))

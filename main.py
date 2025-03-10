@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                               QHeaderView, QSpinBox, QDoubleSpinBox, QProgressBar, QMessageBox,
                               QSplitter, QGroupBox, QFormLayout, QToolBar, QComboBox, QSizePolicy, QDialog)
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QSettings, QSize
-from PySide6.QtGui import QIcon, QFont, QColor, QAction
+from PySide6.QtGui import QIcon, QFont, QColor, QAction, QPainter, QPixmap
 
 # Import your building size function
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -20,6 +20,59 @@ from geopy.geocoders import Nominatim
 import pandas as pd
 from threading import Timer
 from theme import ThemeWindow
+
+class LocationLinkWidget(QWidget):
+    """Custom widget that shows a location icon that opens Google Maps when clicked"""
+    
+    def __init__(self, latitude, longitude, accent_color, parent=None):
+        super().__init__(parent)
+        self.latitude = latitude
+        self.longitude = longitude
+        self.accent_color = accent_color
+        
+        # Create a layout
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)  # Reduce margins to make widget more compact
+        layout.setAlignment(Qt.AlignCenter)  # Center the icon both horizontally and vertically
+        
+        # Create a label with the location icon
+        self.icon_label = QLabel()
+        self.update_icon()
+        
+        # Set smaller fixed size for the icon
+        self.icon_label.setFixedSize(20, 20)  # Smaller icon (was 24x24)
+        
+        # Add to layout
+        layout.addWidget(self.icon_label)
+        
+        # Set cursor to pointing hand when hovering
+        self.setCursor(Qt.PointingHandCursor)
+    
+    def update_icon(self):
+        """Update the icon with the current accent color"""
+        # Load the SVG file
+        pixmap = QPixmap("./svg/location.svg")
+        
+        # Create a painter to recolor the SVG
+        painter = QPainter(pixmap)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        painter.fillRect(pixmap.rect(), QColor(self.accent_color))
+        painter.end()
+        
+        # Set the recolored icon to the label
+        self.icon_label.setPixmap(pixmap.scaled(20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation))  # Smaller icon
+    
+    def update_accent_color(self, accent_color):
+        """Update the widget with a new accent color"""
+        self.accent_color = accent_color
+        self.update_icon()
+    
+    def mousePressEvent(self, event):
+        """Handle mouse click event to open Google Maps"""
+        if event.button() == Qt.LeftButton:
+            maps_url = f"https://www.google.com/maps/search/?api=1&query={self.latitude},{self.longitude}"
+            webbrowser.open(maps_url)
+        super().mousePressEvent(event)
 
 class BuildingSearchWorker(QThread):
     """Worker thread to run the building search without freezing the UI"""
@@ -49,6 +102,9 @@ class BuildingSizeFinderApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("Building Locator")
         self.setMinimumSize(800, 600)
+        
+        # Initialize missing_addresses list
+        self.missing_addresses = []
         
         # Load settings
         self.settings = QSettings("BuildingSizeFinder", "BuildingSizeFinder")
@@ -102,21 +158,38 @@ class BuildingSizeFinderApp(QMainWindow):
         self.search_button = QPushButton("Search")
         self.search_button.setFixedHeight(40)
         self.search_button.clicked.connect(self.start_search)
+        # Add initial styling to search button to match theme
+        self.search_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.accent_color};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {self.accent_hover};
+            }}
+            QPushButton:pressed {{
+                background-color: {self.accent_pressed};
+            }}
+        """)
         button_layout.addWidget(self.search_button)
         
         # Location button that opens Google Maps
-        location_button = QPushButton()
+        self.location_button = QPushButton()
         
         # Create a white icon by loading and coloring the SVG
         icon = QIcon("./svg/location.svg")
         
         # Set the white icon to the button
-        location_button.setIcon(icon)
-        location_button.setToolTip("Open location in Google Maps")
-        location_button.clicked.connect(self.open_in_google_maps)
-        location_button.setFixedSize(40, 40)
-        location_button.setIconSize(QSize(24, 24))
-        location_button.setStyleSheet(f"""
+        self.location_button.setIcon(icon)
+        self.location_button.setToolTip("Open location in Google Maps")
+        self.location_button.clicked.connect(self.open_in_google_maps)
+        self.location_button.setFixedSize(40, 40)
+        self.location_button.setIconSize(QSize(24, 24))
+        self.location_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {self.accent_color};
                 border-radius: 20px;
@@ -127,7 +200,7 @@ class BuildingSizeFinderApp(QMainWindow):
                 background-color: {self.accent_hover};
             }}
         """)
-        button_layout.addWidget(location_button)
+        button_layout.addWidget(self.location_button)
         
         # Add the button layout to the main layout
         top_layout.addLayout(button_layout)
@@ -164,9 +237,9 @@ class BuildingSizeFinderApp(QMainWindow):
         
         # Results table
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(8)
+        self.results_table.setColumnCount(9)
         self.results_table.setHorizontalHeaderLabels([
-            "ID", "Sq-Ft", "Levels", "Latitude", "Longitude", "Address", "Type", "Name"
+            "ID", "Sq-Ft", "Levels", "Latitude", "Longitude", "Address", "Type", "Name", "Map"
         ])
         
         # Store column indexes for easier reference
@@ -178,7 +251,8 @@ class BuildingSizeFinderApp(QMainWindow):
             "longitude": 4,
             "address": 5,
             "type": 6,
-            "name": 7
+            "name": 7,
+            "map": 8
         }
         
         # Apply column visibility based on settings
@@ -388,10 +462,13 @@ class BuildingSizeFinderApp(QMainWindow):
     
     def load_theme_colors(self):
         """Load theme colors from settings"""
-        # Define accent colors (with defaults)
+        # Load accent color (default to blue)
         self.accent_color = self.settings.value("theme/accent_color", "#4a86e8")
         self.accent_hover = self.settings.value("theme/accent_hover", "#5a96f8")
         self.accent_pressed = self.settings.value("theme/accent_pressed", "#3a76d8")
+        
+        # Update styles for any elements that use these colors
+        self.update_styled_elements()
     
     def create_toolbar(self):
         """Create the toolbar with settings and theme icons"""
@@ -405,7 +482,7 @@ class BuildingSizeFinderApp(QMainWindow):
         
         # Create theme action
         theme_action = QAction(QIcon("./icons/theme.png"), "Theme", self)
-        theme_action.triggered.connect(self.show_theme)
+        theme_action.triggered.connect(self.open_theme_window)
         
         # Create settings action
         settings_action = QAction(QIcon("./icons/settings.png"), "Settings", self)
@@ -418,15 +495,14 @@ class BuildingSizeFinderApp(QMainWindow):
         
         self.addToolBar(toolbar)
     
-    def show_theme(self):
-        """Show the theme dialog"""
-        theme_dialog = ThemeWindow(self)
-        theme_dialog.theme_changed.connect(self.on_theme_changed)
-        theme_dialog.exec()
+    def open_theme_window(self):
+        """Open the theme settings window"""
+        theme_window = ThemeWindow(self)
+        theme_window.theme_changed.connect(self.on_theme_changed)
+        theme_window.exec()
     
     def on_theme_changed(self):
-        """Handle theme changes"""
-        # Reload theme colors
+        """Handle theme changes from the theme window"""
         self.load_theme_colors()
         
         # Update application stylesheet
@@ -660,6 +736,22 @@ class BuildingSizeFinderApp(QMainWindow):
                     background-color: {self.accent_pressed};
                 }}
             """)
+        
+        # Update map widgets in the table
+        self.update_map_widgets()
+    
+    def update_map_widgets(self):
+        """Update the color of map widgets in the results table"""
+        if not hasattr(self, 'results_table'):
+            return
+        
+        # Check if map column exists and update all map widgets
+        if "map" in self.column_indexes:
+            map_col = self.column_indexes["map"]
+            for row in range(self.results_table.rowCount()):
+                widget = self.results_table.cellWidget(row, map_col)
+                if isinstance(widget, LocationLinkWidget):
+                    widget.update_accent_color(self.accent_color)
     
     def show_settings(self):
         """Show the settings dialog"""
@@ -961,98 +1053,112 @@ class BuildingSizeFinderApp(QMainWindow):
     
     @Slot(dict)
     def handle_results(self, result):
-        """Handle the search results"""
-        # Hide progress indicators
-        self.progress_bar.hide()
+        """Handle search results and update the UI"""
         self.search_button.setEnabled(True)
+        self.progress_bar.hide()
         
-        # Check for errors
+        # Clear missing addresses list for new search
+        self.missing_addresses = []
+        
         if "error" in result:
-            self.status_label.setText(f"Error: {result['error']}")
-            self.results_count.setText("Search failed")
-            QMessageBox.warning(self, "Error", f"Search failed: {result['error']}")
+            QMessageBox.warning(self, "Search Error", result["error"])
+            self.results_count.setText("Error")
+            self.status_label.setText("Search failed")
             return
         
-        # Update status
-        buildings = result.get("buildings", [])
-        total = result.get("total_buildings", 0)
-        self.status_label.setText("Search completed")
-        self.results_count.setText(f"Found {total} buildings")
+        # Store the buildings data for additional processing
+        self.buildings = result["buildings"]
         
-        # Store buildings list for later use
-        self.buildings = buildings
-        
-        # Apply building type filters
+        # Apply building type filters if any are set
         self.apply_building_type_filters()
         
-        # Populate table
-        self.results_table.setRowCount(len(self.buildings))
+        # Update result count
+        self.results_count.setText(f"Found {len(self.buildings)} buildings")
         
-        # Track buildings without address data
-        self.missing_addresses = []
+        # Populate results table
+        self.results_table.setRowCount(len(self.buildings))
         
         for row, building in enumerate(self.buildings):
             # ID
             id_item = QTableWidgetItem(str(building["id"]))
             self.results_table.setItem(row, self.column_indexes["id"], id_item)
             
-            # Square Footage
+            # Sq-Ft
             sqft_item = QTableWidgetItem(f"{building['sqft']:,}")
-            sqft_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.results_table.setItem(row, self.column_indexes["sqft"], sqft_item)
             
-            # Levels (new column)
+            # Levels
             levels_item = QTableWidgetItem(str(building.get("levels", "unknown")))
-            levels_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.results_table.setItem(row, self.column_indexes["levels"], levels_item)
             
-            # Latitude (now column 3 instead of 2)
-            lat_item = QTableWidgetItem(f"{building['lat']:.6f}")
-            lat_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            # Latitude
+            lat_item = QTableWidgetItem(str(building["lat"]))
             self.results_table.setItem(row, self.column_indexes["latitude"], lat_item)
             
-            # Longitude (now column 4 instead of 3)
-            lon_item = QTableWidgetItem(f"{building['lon']:.6f}")
-            lon_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            # Longitude
+            lon_item = QTableWidgetItem(str(building["lon"]))
             self.results_table.setItem(row, self.column_indexes["longitude"], lon_item)
             
-            # Address (now column 5 instead of 4)
-            address = building.get("address", "")
-            address_item = QTableWidgetItem(address)
+            # Address
+            address = building.get("address", "No address data")
+            address_item = QTableWidgetItem(str(address))
             self.results_table.setItem(row, self.column_indexes["address"], address_item)
             
+            # Check if address is incomplete
+            has_street = any(street_type in address for street_type in ["Street", "St ", "Avenue", "Ave ", "Road", "Rd ", "Drive", "Dr ", "Lane", "Ln ", "Boulevard", "Blvd", "Way", "Place", "Court", "Ct "])
+            
             # Track buildings with missing addresses
-            if not address or address == "No address data":
+            if not address or address == "No address data" or not has_street:
                 self.missing_addresses.append({
                     "row": row,
                     "lat": building['lat'],
                     "lon": building['lon']
                 })
             
-            # Building Type (now column 6 instead of 5)
+            # Building Type
             type_item = QTableWidgetItem(str(building.get("building_type", "unknown")))
             self.results_table.setItem(row, self.column_indexes["type"], type_item)
             
-            # Name (now column 7 instead of 8)
+            # Name
             name_item = QTableWidgetItem(str(building.get("name", "unnamed")))
             self.results_table.setItem(row, self.column_indexes["name"], name_item)
             
+            # Map Link - create a widget with the location icon
+            if building['lat'] and building['lon']:
+                location_widget = LocationLinkWidget(building['lat'], building['lon'], self.accent_color)
+                self.results_table.setCellWidget(row, self.column_indexes["map"], location_widget)
+            
             # Apply alternating row colors
-            for col in range(8):  # Updated from 9 to 8 columns
-                item = self.results_table.item(row, col)
-                if row % 2 == 0:
-                    item.setBackground(QColor("#353535"))  # Dark mode alternating color
-                else:
-                    item.setBackground(QColor("#2d2d2d"))  # Dark mode base color
+            for col in range(9):  # Updated for the new column count
+                if col != self.column_indexes["map"]:  # Skip the widget column
+                    item = self.results_table.item(row, col)
+                    if item:  # Only set background if item exists
+                        if row % 2 == 0:
+                            item.setBackground(QColor("#353535"))  # Dark mode alternating color
+                        else:
+                            item.setBackground(QColor("#2d2d2d"))  # Dark mode base color
         
         # Auto resize rows for better appearance
         self.results_table.resizeRowsToContents()
         
         # If there are buildings with missing addresses and the setting is enabled, fetch them
         fetch_addresses = self.settings.value("fetch_missing_addresses", True, bool)
-        if fetch_addresses and self.missing_addresses and len(self.missing_addresses) <= 50:
+        
+        # Debug the fetch condition
+        print(f"Fetch addresses setting: {fetch_addresses}")
+        print(f"Missing addresses count: {len(self.missing_addresses)}")
+        
+        if fetch_addresses and len(self.missing_addresses) > 0:
             self.status_label.setText(f"Finding addresses for {len(self.missing_addresses)} buildings...")
-            self.fetch_missing_addresses()
+            # Use a small delay to allow UI to update before starting address fetching
+            Timer(0.5, self.fetch_missing_addresses).start()
+        else:
+            if len(self.missing_addresses) > 50:
+                self.status_label.setText(f"Too many missing addresses ({len(self.missing_addresses)}). Skipping fetch.")
+            elif len(self.missing_addresses) == 0:
+                self.status_label.setText("No addresses need to be fetched.")
+            else:
+                self.status_label.setText("Address fetching is disabled in settings.")
     
     def fetch_missing_addresses(self):
         """Fetch missing addresses in a background process with rate limiting"""
@@ -1100,61 +1206,38 @@ class BuildingSizeFinderApp(QMainWindow):
 
     def format_address(self, location):
         """Format address consistently from Nominatim location object"""
-        if not location:
+        if not location or not location.raw or 'address' not in location.raw:
             return "No address data"
         
-        # If we have raw address details, use them for consistent formatting
-        if hasattr(location, 'raw') and 'address' in location.raw:
-            address_parts = []
-            address_data = location.raw['address']
-            
-            # Build address in a consistent order
-            # First add building-specific information
-            if 'house_number' in address_data:
-                address_parts.append(address_data['house_number'])
-            
-            # Add street
-            if 'road' in address_data:
-                address_parts.append(address_data['road'])
-            elif 'pedestrian' in address_data:
-                address_parts.append(address_data['pedestrian'])
-            elif 'footway' in address_data:
-                address_parts.append(address_data['footway'])
-            
-            # Add neighborhood/suburb
-            if 'suburb' in address_data:
-                address_parts.append(address_data['suburb'])
-            elif 'neighbourhood' in address_data:
-                address_parts.append(address_data['neighbourhood'])
-            
-            # Add city/town
-            if 'city' in address_data:
-                address_parts.append(address_data['city'])
-            elif 'town' in address_data:
-                address_parts.append(address_data['town'])
-            elif 'village' in address_data:
-                address_parts.append(address_data['village'])
-            
-            # Add state/province
-            if 'state' in address_data:
-                address_parts.append(address_data['state'])
-            elif 'province' in address_data:
-                address_parts.append(address_data['province'])
-            
-            # Add postal code
-            if 'postcode' in address_data:
-                address_parts.append(address_data['postcode'])
-            
-            # Add country
-            if 'country' in address_data:
-                address_parts.append(address_data['country'])
-            
-            # Join all parts with commas
-            if address_parts:
-                return ", ".join(address_parts)
+        address_parts = []
+        address_data = location.raw['address']
         
-        # Fallback to the full address string if structured data isn't available
-        return location.address if hasattr(location, 'address') else "No address data"
+        # Building number and street
+        building_number = address_data.get('house_number') or address_data.get('building')
+        street = address_data.get('road') or address_data.get('street')
+        
+        if building_number and street:
+            address_parts.append(f"{building_number} {street}")
+        elif street:
+            address_parts.append(street)
+        
+        # City/town
+        city = (address_data.get('city') or address_data.get('town') or 
+                address_data.get('village') or address_data.get('hamlet'))
+        if city:
+            address_parts.append(city)
+        
+        # State/province
+        state = address_data.get('state') or address_data.get('province')
+        if state:
+            address_parts.append(state)
+        
+        # Postal code
+        postcode = address_data.get('postcode')
+        if postcode:
+            address_parts.append(postcode)
+        
+        return ", ".join(address_parts) if address_parts else "No address data"
 
     def closeEvent(self, event):
         """Save window state and geometry when closing"""
@@ -1189,10 +1272,22 @@ class BuildingSizeFinderApp(QMainWindow):
         header = self.results_table.horizontalHeader()
         header.blockSignals(True)
         
-        # Set column widths according to percentages
+        # Set the map column to a fixed width
+        if "map" in self.column_indexes:
+            map_col = self.column_indexes["map"]
+            if not self.results_table.isColumnHidden(map_col):
+                header.setSectionResizeMode(map_col, QHeaderView.Fixed)
+                header.resizeSection(map_col, 40)  # Increased width for map column (was 30px)
+                available_width -= 40  # Subtract from available space for other columns
+        
+        # Account for a small buffer to prevent horizontal scrollbar
+        available_width -= 2  # Small buffer to prevent horizontal scrollbar
+        
+        # Set column widths according to percentages for other columns
         for col, percentage in enumerate(self.column_percentages):
-            width = int(available_width * percentage / 100)
-            header.resizeSection(col, width)
+            if col != self.column_indexes.get("map") and percentage > 0:  # Skip map column and hidden columns
+                width = int(available_width * percentage / 100)
+                header.resizeSection(col, width)
         
         # Unblock signals
         header.blockSignals(False)
@@ -1224,7 +1319,8 @@ class BuildingSizeFinderApp(QMainWindow):
             "longitude": False,  # Off by default
             "address": True,
             "type": True,
-            "name": True
+            "name": True,
+            "map": True  # Turn on by default since we've added it
         }
         
         # Get the visibility for each column from settings
@@ -1234,6 +1330,13 @@ class BuildingSizeFinderApp(QMainWindow):
                                             bool)
             self.results_table.setColumnHidden(column_index, not is_visible)
         
+        # Set the map column resize mode to Fixed
+        if "map" in self.column_indexes:
+            map_col = self.column_indexes["map"]
+            if not self.results_table.isColumnHidden(map_col):
+                self.results_table.horizontalHeader().setSectionResizeMode(map_col, QHeaderView.Fixed)
+                self.results_table.setColumnWidth(map_col, 40)  # Increased width (was 30px)
+        
         # Update the percentages after changing visibility
         self.update_column_percentages()
 
@@ -1242,7 +1345,7 @@ class BuildingSizeFinderApp(QMainWindow):
         # Count visible columns
         visible_columns = []
         for i in range(self.results_table.columnCount()):
-            if not self.results_table.isColumnHidden(i):
+            if not self.results_table.isColumnHidden(i) and i != self.column_indexes.get("map"):
                 visible_columns.append(i)
         
         # Skip if no columns are visible
@@ -1259,21 +1362,22 @@ class BuildingSizeFinderApp(QMainWindow):
             4: 11,  # Longitude
             5: 22,  # Address
             6: 9,   # Type
-            7: 12   # Name
+            7: 12,  # Name
+            # Map column is handled separately with fixed width
         }
         
         # Calculate total weight of visible columns
-        total_weight = sum(content_weight[i] for i in visible_columns)
+        total_weight = sum(content_weight.get(i, 0) for i in visible_columns)
         
         # Create new percentages list based on visible columns
         self.column_percentages = []
         for i in range(self.results_table.columnCount()):
             if i in visible_columns:
                 # Calculate percentage based on weight
-                percentage = (content_weight[i] / total_weight) * 100
+                percentage = (content_weight.get(i, 0) / total_weight) * 100
                 self.column_percentages.append(percentage)
             else:
-                # Hidden column gets 0%
+                # Hidden column or map column gets 0%
                 self.column_percentages.append(0)
         
         # Update column widths with new percentages

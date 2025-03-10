@@ -154,7 +154,8 @@ class SettingsWindow(QDialog):
             "longitude": ("Longitude", False),
             "address": ("Address", True),
             "type": ("Type", True),
-            "name": ("Name", True)
+            "name": ("Name", True),
+            "map": ("Map", True)
         }
         
         # Create checkbox for each column
@@ -382,7 +383,8 @@ class SettingsWindow(QDialog):
             "longitude": False,
             "address": True,
             "type": True,
-            "name": True
+            "name": True,
+            "map": True
         }
         
         for column_key, checkbox in self.column_checkboxes.items():
