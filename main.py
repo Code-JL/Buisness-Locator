@@ -245,15 +245,15 @@ class BuildingSizeFinderApp(QMainWindow):
 
         # Create fetch addresses button - smaller version
         self.fetch_button = QPushButton("Fetch Addresses")
-        self.fetch_button.setFixedSize(100, 24)  # Much smaller size
+        self.fetch_button.setFixedSize(120, 30)  # Increased width from 100 to 120
         self.fetch_button.clicked.connect(self.manual_fetch_addresses)
         self.fetch_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {self.accent_color};
                 color: white;
                 border: none;
-                border-radius: 12px;  # Half of height for pill shape
-                padding: 2px 8px;
+                border-radius: 12px; /* Half of height for pill shape */
+                padding: 2px 12px; /* Increased horizontal padding */
                 font-size: 10px;
                 font-weight: bold;
             }}
