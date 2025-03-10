@@ -106,6 +106,9 @@ class BuildingSizeFinderApp(QMainWindow):
         # Initialize missing_addresses list
         self.missing_addresses = []
         
+        # Track current sort order for each column
+        self.sort_orders = {}  # Will store {column_index: Qt.SortOrder}
+        
         # Load settings
         self.settings = QSettings("BuildingSizeFinder", "BuildingSizeFinder")
         
@@ -141,8 +144,15 @@ class BuildingSizeFinderApp(QMainWindow):
         title_label.setFont(title_font)
         top_layout.addWidget(title_label)
         
-        # Form Group
-        self.form_group = QGroupBox("Search Parameters")
+        # Form Group with title and fetch button in horizontal layout
+        form_header_layout = QHBoxLayout()
+        form_title = QLabel("Search Parameters")
+        form_title.setFont(title_font)
+        form_header_layout.addWidget(form_title)
+        top_layout.addLayout(form_header_layout)
+        
+        # Create and add the form group
+        self.form_group = QGroupBox()  # Remove the title since we're handling it separately
         self.form_layout = QFormLayout()
         
         # Create location input widgets (will be populated based on settings)
@@ -221,16 +231,50 @@ class BuildingSizeFinderApp(QMainWindow):
         bottom_widget = QWidget()
         bottom_layout = QVBoxLayout(bottom_widget)
         
+        # Results label and fetch button container
+        results_header_layout = QHBoxLayout()
+
         # Results label
         results_label = QLabel("Search Results")
         results_font = QFont()
         results_font.setPointSize(14)
         results_font.setBold(True)
         results_label.setFont(results_font)
-        results_label.setAlignment(Qt.AlignCenter)
-        bottom_layout.addWidget(results_label)
-        
-        # Results count
+        results_label.setAlignment(Qt.AlignLeft)  # Align left to match the fetch button
+        results_header_layout.addWidget(results_label)
+
+        # Create fetch addresses button - smaller version
+        self.fetch_button = QPushButton("Fetch Addresses")
+        self.fetch_button.setFixedSize(100, 24)  # Much smaller size
+        self.fetch_button.clicked.connect(self.manual_fetch_addresses)
+        self.fetch_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.accent_color};
+                color: white;
+                border: none;
+                border-radius: 12px;  # Half of height for pill shape
+                padding: 2px 8px;
+                font-size: 10px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {self.accent_hover};
+            }}
+            QPushButton:pressed {{
+                background-color: {self.accent_pressed};
+            }}
+            QPushButton:disabled {{
+                background-color: #666666;
+            }}
+        """)
+        self.fetch_button.setEnabled(False)  # Initially disabled
+        results_header_layout.addWidget(self.fetch_button)
+        results_header_layout.addStretch()  # Add stretch to keep items left-aligned
+
+        # Add the header layout to bottom layout
+        bottom_layout.addLayout(results_header_layout)
+
+        # Results count (now after the header layout)
         self.results_count = QLabel("No results yet")
         self.results_count.setAlignment(Qt.AlignCenter)
         bottom_layout.addWidget(self.results_count)
@@ -267,6 +311,10 @@ class BuildingSizeFinderApp(QMainWindow):
         
         # Install event filter for table resize events
         self.results_table.resizeEvent = self.handle_table_resize
+        
+        # Enable sorting
+        self.results_table.setSortingEnabled(False)  # Temporarily disable during data loading
+        self.results_table.horizontalHeader().sectionClicked.connect(self.handle_sort)
         
         bottom_layout.addWidget(self.results_table)
         
@@ -1057,6 +1105,9 @@ class BuildingSizeFinderApp(QMainWindow):
         self.search_button.setEnabled(True)
         self.progress_bar.hide()
         
+        # Disable sorting while populating the table
+        self.results_table.setSortingEnabled(False)
+        
         # Clear missing addresses list for new search
         self.missing_addresses = []
         
@@ -1141,6 +1192,9 @@ class BuildingSizeFinderApp(QMainWindow):
         # Auto resize rows for better appearance
         self.results_table.resizeRowsToContents()
         
+        # Update fetch button state based on missing addresses
+        self.fetch_button.setEnabled(len(self.missing_addresses) > 0)
+        
         # If there are buildings with missing addresses and the setting is enabled, fetch them
         fetch_addresses = self.settings.value("fetch_missing_addresses", True, bool)
         
@@ -1159,11 +1213,15 @@ class BuildingSizeFinderApp(QMainWindow):
                 self.status_label.setText("No addresses need to be fetched.")
             else:
                 self.status_label.setText("Address fetching is disabled in settings.")
+        
+        # Re-enable sorting after populating
+        self.results_table.setSortingEnabled(True)
     
     def fetch_missing_addresses(self):
         """Fetch missing addresses in a background process with rate limiting"""
         if not self.missing_addresses:
             self.status_label.setText("All addresses retrieved")
+            self.fetch_button.setEnabled(False)  # Disable button when done
             return
         
         # Get the next building with missing address
@@ -1203,6 +1261,7 @@ class BuildingSizeFinderApp(QMainWindow):
             Timer(1.0, self.fetch_missing_addresses).start()
         else:
             self.status_label.setText("All addresses retrieved")
+            self.fetch_button.setEnabled(False)  # Disable button when done
 
     def format_address(self, location):
         """Format address consistently from Nominatim location object"""
@@ -1462,6 +1521,106 @@ class BuildingSizeFinderApp(QMainWindow):
         # Update status
         if excluded_count > 0:
             self.status_label.setText(f"Excluded {excluded_count} buildings based on type filters")
+
+    def handle_sort(self, column):
+        """Handle sorting when a column header is clicked"""
+        # Skip sorting for the map column and address column as they can cause issues
+        if column == self.column_indexes.get("map") or column == self.column_indexes.get("address"):
+            return
+        
+        # Toggle sort order for the clicked column
+        current_order = self.sort_orders.get(column, Qt.AscendingOrder)
+        new_order = Qt.DescendingOrder if current_order == Qt.AscendingOrder else Qt.AscendingOrder
+        self.sort_orders[column] = new_order
+        
+        # Disable sorting temporarily to prevent automatic sorting
+        self.results_table.setSortingEnabled(False)
+        
+        # Get the column key for special handling
+        column_key = next((key for key, value in self.column_indexes.items() if value == column), None)
+        
+        # Sort the data
+        row_count = self.results_table.rowCount()
+        items_to_sort = []
+        
+        for row in range(row_count):
+            item = self.results_table.item(row, column)
+            # Get the display value, handle None items
+            value = item.text() if item else ""
+            
+            # Special handling for different column types
+            if column_key in ["sqft", "levels", "latitude", "longitude"]:
+                try:
+                    # Handle comma-separated numbers and convert to float
+                    value = float(value.replace(",", "")) if value else float('-inf')
+                except (ValueError, AttributeError):
+                    value = float('-inf')  # Handle invalid values
+            elif column_key == "id":
+                # Handle ID column (could be numeric or text)
+                try:
+                    value = int(value) if value else -1
+                except ValueError:
+                    value = value if value else "zzz"
+            elif column_key in ["type", "name"]:
+                # Handle text columns, make them case-insensitive
+                value = value.lower() if value else "zzz"
+            else:
+                # Default text handling
+                value = value if value else "zzz"
+            
+            # Always append the row, even if the item is None
+            items_to_sort.append((value, row))
+        
+        # Sort the items
+        items_to_sort.sort(reverse=(new_order == Qt.DescendingOrder))
+        
+        # Reorder the table rows
+        for new_row, (_, old_row) in enumerate(items_to_sort):
+            # Create a list to store items and widgets for the current row
+            row_items = []
+            row_widgets = []
+            
+            # Save all items and widgets from the current row
+            for col in range(self.results_table.columnCount()):
+                if col == self.column_indexes.get("map"):
+                    widget = self.results_table.cellWidget(old_row, col)
+                    row_widgets.append(widget)
+                    row_items.append(None)
+                else:
+                    item = self.results_table.takeItem(old_row, col)
+                    row_items.append(item)
+                    row_widgets.append(None)
+            
+            # Move items and widgets to their new position
+            for col in range(self.results_table.columnCount()):
+                if col == self.column_indexes.get("map"):
+                    if row_widgets[col]:
+                        self.results_table.setCellWidget(new_row, col, row_widgets[col])
+                else:
+                    if row_items[col]:
+                        self.results_table.setItem(new_row, col, row_items[col])
+        
+        # Update the buildings data to match the new order
+        if hasattr(self, 'buildings'):
+            sorted_buildings = []
+            for _, old_row in items_to_sort:
+                sorted_buildings.append(self.buildings[old_row])
+            self.buildings = sorted_buildings
+        
+        # Update the header to show sort indicator
+        self.results_table.horizontalHeader().setSortIndicator(column, new_order)
+        
+        # Re-enable sorting
+        self.results_table.setSortingEnabled(True)
+
+    def manual_fetch_addresses(self):
+        """Manually trigger address fetching"""
+        if self.missing_addresses:
+            self.status_label.setText(f"Finding addresses for {len(self.missing_addresses)} buildings...")
+            self.fetch_button.setEnabled(False)
+            self.fetch_missing_addresses()
+        else:
+            self.status_label.setText("No addresses to fetch")
 
 def main():
     app = QApplication(sys.argv)
