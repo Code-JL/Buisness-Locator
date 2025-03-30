@@ -4,7 +4,8 @@ import webbrowser  # Add this import for opening URLs
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                               QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, 
                               QHeaderView, QSpinBox, QDoubleSpinBox, QProgressBar, QMessageBox,
-                              QSplitter, QGroupBox, QFormLayout, QToolBar, QComboBox, QSizePolicy, QDialog)
+                              QSplitter, QGroupBox, QFormLayout, QToolBar, QComboBox, QSizePolicy,
+                              QDialog, QFileDialog)
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QSettings, QSize
 from PySide6.QtGui import QIcon, QFont, QColor, QAction, QPainter, QPixmap
 
@@ -15,7 +16,7 @@ from settings import SettingsWindow
 
 # Import geocoding functions
 import pgeocode
-import time
+import csv
 from geopy.geocoders import Nominatim
 import pandas as pd
 from threading import Timer
@@ -245,6 +246,7 @@ class BuildingSizeFinderApp(QMainWindow):
 
         # Create fetch addresses button - smaller version
         self.fetch_button = QPushButton("Fetch Addresses")
+        self.fetch_button.setToolTip("WARNING: takes a long time, 1 second per missing address")
         self.fetch_button.setFixedSize(120, 30)  # Increased width from 100 to 120
         self.fetch_button.clicked.connect(self.manual_fetch_addresses)
         self.fetch_button.setStyleSheet(f"""
@@ -268,7 +270,34 @@ class BuildingSizeFinderApp(QMainWindow):
             }}
         """)
         self.fetch_button.setEnabled(False)  # Initially disabled
+
+        self.export_button = QPushButton("Export to CSV file", self)
+        self.export_button.setFixedSize(120, 30)  # Increased width from 100 to 120
+        self.export_button.setToolTip("Export the current table data to a CSV file")
+        self.export_button.clicked.connect(self.export_csv)
+        self.export_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.accent_color};
+                color: white;
+                border: none;
+                border-radius: 12px; /* Half of height for pill shape */
+                padding: 2px 12px; /* Increased horizontal padding */
+                font-size: 10px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {self.accent_hover};
+            }}
+            QPushButton:pressed {{
+                background-color: {self.accent_pressed};
+            }}
+            QPushButton:disabled {{
+                background-color: #666666;
+            }}
+        """)
+
         results_header_layout.addWidget(self.fetch_button)
+        results_header_layout.addWidget(self.export_button)
         results_header_layout.addStretch()  # Add stretch to keep items left-aligned
 
         # Add the header layout to bottom layout
@@ -937,11 +966,11 @@ class BuildingSizeFinderApp(QMainWindow):
             # For km and miles, we need decimal values
             self.radius_input = QDoubleSpinBox()
             if distance_unit == "km":
-                self.radius_input.setRange(0.1, 10)
-                self.radius_input.setValue(1.0 if current_radius <= 500 else 5.0)  # Default to 1km or 5km
+                self.radius_input.setRange(0.1, 100)
+                self.radius_input.setValue(1.0)  # Default to 1km or 5km
             else:  # miles
-                self.radius_input.setRange(0.1, 6)
-                self.radius_input.setValue(0.6 if current_radius <= 500 else 3.0)  # Default to 0.6mi or 3mi
+                self.radius_input.setRange(0.1, 60)
+                self.radius_input.setValue(0.6)  # Default to 0.6mi or 3mi
             self.radius_input.setSingleStep(0.1)
             self.radius_input.setDecimals(1)
         else:  # meters
@@ -1130,6 +1159,7 @@ class BuildingSizeFinderApp(QMainWindow):
         self.results_table.setRowCount(len(self.buildings))
         
         for row, building in enumerate(self.buildings):
+            
             # ID
             id_item = QTableWidgetItem(str(building["id"]))
             self.results_table.setItem(row, self.column_indexes["id"], id_item)
@@ -1175,8 +1205,12 @@ class BuildingSizeFinderApp(QMainWindow):
             self.results_table.setItem(row, self.column_indexes["name"], name_item)
             
             # Map Link - create a widget with the location icon
-            if building['lat'] and building['lon']:
-                location_widget = LocationLinkWidget(building['lat'], building['lon'], self.accent_color)
+            try:
+                if building['lat'] and building['lon']:
+                    location_widget = LocationLinkWidget(building['lat'], building['lon'], self.accent_color)
+                    self.results_table.setCellWidget(row, self.column_indexes["map"], location_widget)
+            except ValueError:
+                location_widget = LocationLinkWidget(0.0, 0.0, self.accent_color)
                 self.results_table.setCellWidget(row, self.column_indexes["map"], location_widget)
             
             # Apply alternating row colors
@@ -1621,6 +1655,46 @@ class BuildingSizeFinderApp(QMainWindow):
             self.fetch_missing_addresses()
         else:
             self.status_label.setText("No addresses to fetch")
+
+    def export_csv(self):
+        """Export the current table data to a CSV file"""
+        try:
+            # Open a file dialog to select the save location
+            options = QFileDialog.Options()
+            file_name, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save CSV File",
+                "",
+                "CSV Files (*.csv);;All Files (*)",
+                options=options
+            )
+            
+            if file_name:
+                # Open the file in write mode
+                with open(file_name, mode='w', newline='', encoding='utf-8') as file:
+                    writer = csv.writer(file)
+                    
+                    # Write the header row
+                    header = []
+                    for column_index in range(self.results_table.columnCount()):
+                        if not self.results_table.isColumnHidden(column_index) and column_index != self.column_indexes.get("map"):
+                            header.append(self.results_table.horizontalHeaderItem(column_index).text())
+                    writer.writerow(header)
+                    
+                    # Write the data rows
+                    for row in range(self.results_table.rowCount()):
+                        row_data = []
+                        for column_index in range(self.results_table.columnCount()):
+                            if not self.results_table.isColumnHidden(column_index) and column_index != self.column_indexes.get("map"):
+                                item = self.results_table.item(row, column_index)
+                                row_data.append(item.text() if item else '')
+                        writer.writerow(row_data)
+                
+                self.status_label.setText(f"Data exported to {file_name}")
+            else:
+                self.status_label.setText("Export cancelled")
+        except Exception as e:
+            QMessageBox.warning(self, "Export Error", f"Could not export data: {str(e)}")
 
 def main():
     app = QApplication(sys.argv)

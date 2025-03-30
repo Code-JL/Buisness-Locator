@@ -16,7 +16,7 @@ class SettingsWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumSize(500, 700)
+        self.setMinimumSize(500, 800)
         self.setWindowIcon(QIcon("./icons/settings.png"))
         
         # Initialize QSettings
@@ -102,7 +102,7 @@ class SettingsWindow(QDialog):
         
         # Fetch missing addresses checkbox
         self.fetch_addresses_checkbox = QCheckBox("Fetch missing addresses")
-        self.fetch_addresses_checkbox.setToolTip("Automatically look up missing addresses after search")
+        self.fetch_addresses_checkbox.setToolTip("Automatically look up missing addresses after search. WARNING: takes a long time, 1 second per missing address")
         post_processing_layout.addWidget(self.fetch_addresses_checkbox)
         
         # Building type filter section
@@ -161,6 +161,7 @@ class SettingsWindow(QDialog):
         # Create checkbox for each column
         for column_key, (column_name, default_state) in columns.items():
             checkbox = QCheckBox(column_name)
+            checkbox.setToolTip(f"Shows the {column_name.lower()} column in results")
             self.column_checkboxes[column_key] = checkbox
             spreadsheet_layout.addWidget(checkbox)
         
@@ -394,7 +395,7 @@ class SettingsWindow(QDialog):
             checkbox.setChecked(is_visible)
         
         # Load post-processing settings (default to true for backward compatibility)
-        fetch_addresses = self.qsettings.value("fetch_missing_addresses", True, bool)
+        fetch_addresses = self.qsettings.value("fetch_missing_addresses", False, bool)
         self.fetch_addresses_checkbox.setChecked(fetch_addresses)
         
         # Load building type filters (default to false - don't exclude anything by default)

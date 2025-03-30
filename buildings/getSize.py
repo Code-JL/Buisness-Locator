@@ -322,6 +322,9 @@ def process_large_area(longitude, latitude, min_sqft=0, radius=1000, max_radius_
     # For larger areas, split into quadrants
     return process_quadrants(longitude, latitude, min_sqft, radius)
 
+def process_quadrant_worker(params_with_id):
+    return get_buildings_by_size(*params_with_id[0], worker_id=params_with_id[1])
+
 def process_quadrants(longitude, latitude, min_sqft=0, radius=5000):
     """Split a large area using process-based parallelism for CPU-bound tasks"""
     # Calculate the quadrant data
@@ -347,7 +350,7 @@ def process_quadrants(longitude, latitude, min_sqft=0, radius=5000):
     with ProcessPoolExecutor(max_workers=min(4, os.cpu_count() or 4)) as executor:
         # Pass worker_id to ensure consistent endpoint selection
         quadrant_results = list(executor.map(
-            lambda params_with_id: get_buildings_by_size(*params_with_id[0], worker_id=params_with_id[1]), 
+            process_quadrant_worker, 
             [(args[i], i) for i in range(len(args))]
         ))
         
