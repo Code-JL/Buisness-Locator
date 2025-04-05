@@ -1674,7 +1674,11 @@ class BuildingSizeFinderApp(QMainWindow):
                                 else:
                                     row_data.append(item.text() if item else '')
                         writer.writerow(row_data)
-                    self.status_label.setText(f"Data exported to {file_name}")
+                
+                # Change file permissions to make it read and writable
+                os.chmod(file_name, 0o666)  # 0o666 allows read and write for all users
+                
+                self.status_label.setText(f"Data exported to {file_name}")
             else:
                 self.status_label.setText("Export cancelled")
         except Exception as e:
