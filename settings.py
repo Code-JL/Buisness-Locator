@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-                               QComboBox, QPushButton, QGroupBox, QFormLayout,
-                               QButtonGroup, QRadioButton, QCheckBox, QScrollArea,
+                               QPushButton, QGroupBox, QButtonGroup, 
+                               QRadioButton, QCheckBox, QScrollArea,
                                QWidget)
-from PySide6.QtCore import Qt, Signal, QSettings
+from PySide6.QtCore import Signal, QSettings
 from PySide6.QtGui import QIcon
 import os
 import shutil  # Add this import for directory operations
@@ -414,13 +414,11 @@ class SettingsWindow(QDialog):
         try:
             # Use absolute path to the entire cache directory
             cache_folder = os.path.abspath('./cache')
-            print(f"Attempting to clear cache at: {cache_folder}")
             
             # Check if the directory exists
             if os.path.exists(cache_folder):
                 # Count files before deletion for verification
                 file_count = sum(len(files) for _, _, files in os.walk(cache_folder))
-                print(f"Found {file_count} items to delete")
                 
                 # Use shutil.rmtree to remove the entire directory and recreate it
                 try:
@@ -429,14 +427,13 @@ class SettingsWindow(QDialog):
                     os.makedirs(cache_folder, exist_ok=True)
                     # Also recreate the osmnx subfolder
                     os.makedirs(os.path.join(cache_folder, 'osmnx'), exist_ok=True)
-                    print(f"Removed and recreated cache directory")
                     
                     from PySide6.QtWidgets import QMessageBox
                     QMessageBox.information(self, "Cache Cleared", 
                                           f"Successfully cleared {file_count} cached items.\n\n"
                                           f"New searches will fetch fresh data.")
                 except Exception as e:
-                    print(f"Failed to remove directory: {e}")
+                    pass
                     
                     # Alternative approach: delete files individually if rmtree failed
                     success_count = 0
@@ -450,14 +447,13 @@ class SettingsWindow(QDialog):
                                 success_count += 1
                             except Exception as e:
                                 error_files.append(file)
-                                print(f"Failed to delete {file_path}: {e}")
                         
                         for dir in dirs:
                             dir_path = os.path.join(root, dir)
                             try:
                                 os.rmdir(dir_path)
                             except Exception as e:
-                                print(f"Failed to delete directory {dir_path}: {e}")
+                                pass
                     
                     from PySide6.QtWidgets import QMessageBox
                     if success_count > 0:
@@ -480,4 +476,3 @@ class SettingsWindow(QDialog):
         except Exception as e:
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Error", f"Failed to clear cache: {str(e)}")
-            print(f"Cache clear exception: {e}")

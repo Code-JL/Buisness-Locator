@@ -890,8 +890,6 @@ class BuildingSizeFinderApp(QMainWindow):
             # Get saved country code directly from settings
             saved_country = self.settings.value("selected_country", "US", str)
             
-            # Print debug info
-            print(f"Loading country selection: {saved_country}")
             
             # Set the selection based on saved country
             if saved_country == "CA":
@@ -922,9 +920,6 @@ class BuildingSizeFinderApp(QMainWindow):
             
             # Get saved country code directly from settings
             saved_country = self.settings.value("selected_country", "US", str)
-            
-            # Print debug info
-            print(f"Loading country selection: {saved_country}")
             
             # Set the selection based on saved country
             if saved_country == "CA":
@@ -986,9 +981,6 @@ class BuildingSizeFinderApp(QMainWindow):
     def save_country_selection(self, index):
         """Save the selected country to settings"""
         country_code = self.country_input.itemData(index)
-        
-        # Print debug info
-        print(f"Saving country selection: {country_code}, index: {index}")
         
         # Explicitly save as string
         self.settings.setValue("selected_country", str(country_code))
@@ -1058,9 +1050,6 @@ class BuildingSizeFinderApp(QMainWindow):
             
             self.settings.setValue("selected_country", country_code)
             self.settings.sync()
-            
-            # Print for debugging
-            print(f"Using country for city search: {country_code}")
             
             country_name = self.country_input.currentText()
             state = self.state_input.text().strip()
@@ -1230,11 +1219,7 @@ class BuildingSizeFinderApp(QMainWindow):
         self.fetch_button.setEnabled(len(self.missing_addresses) > 0)
         
         # If there are buildings with missing addresses and the setting is enabled, fetch them
-        fetch_addresses = self.settings.value("fetch_missing_addresses", True, bool)
-        
-        # Debug the fetch condition
-        print(f"Fetch addresses setting: {fetch_addresses}")
-        print(f"Missing addresses count: {len(self.missing_addresses)}")
+        fetch_addresses = self.settings.setValue("fetch_missing_addresses")
         
         if fetch_addresses and len(self.missing_addresses) > 0:
             self.status_label.setText(f"Finding addresses for {len(self.missing_addresses)} buildings...")
@@ -1284,7 +1269,7 @@ class BuildingSizeFinderApp(QMainWindow):
                 if hasattr(self, 'buildings') and building_info['row'] < len(self.buildings):
                     self.buildings[building_info['row']]['address'] = formatted_address
         except Exception as e:
-            print(f"Error retrieving address: {e}")
+            pass
         
         # Update status
         remaining = len(self.missing_addresses)
@@ -1499,7 +1484,6 @@ class BuildingSizeFinderApp(QMainWindow):
             country_index = self.country_input.currentIndex()
             country_code = "US" if country_index == 0 else "CA"
             self.settings.setValue("selected_country", country_code)
-            print(f"Saving country selection during type change: {country_code}")
         
         self.save_current_values()
         
@@ -1668,42 +1652,47 @@ class BuildingSizeFinderApp(QMainWindow):
                 "CSV Files (*.csv);;All Files (*)",
                 options=options
             )
-            
             if file_name:
                 # Open the file in write mode
                 with open(file_name, mode='w', newline='', encoding='utf-8') as file:
                     writer = csv.writer(file)
-                    
                     # Write the header row
                     header = []
                     for column_index in range(self.results_table.columnCount()):
                         if not self.results_table.isColumnHidden(column_index) and column_index != self.column_indexes.get("map"):
                             header.append(self.results_table.horizontalHeaderItem(column_index).text())
                     writer.writerow(header)
-                    
                     # Write the data rows
                     for row in range(self.results_table.rowCount()):
                         row_data = []
                         for column_index in range(self.results_table.columnCount()):
                             if not self.results_table.isColumnHidden(column_index) and column_index != self.column_indexes.get("map"):
                                 item = self.results_table.item(row, column_index)
-                                row_data.append(item.text() if item else '')
+                                if column_index == self.column_indexes["sqft"]:
+                                    # Remove commas from SqFt column
+                                    row_data.append(item.text().replace(',', '') if item else '')
+                                else:
+                                    row_data.append(item.text() if item else '')
                         writer.writerow(row_data)
-                
-                self.status_label.setText(f"Data exported to {file_name}")
+                    self.status_label.setText(f"Data exported to {file_name}")
             else:
                 self.status_label.setText("Export cancelled")
         except Exception as e:
             QMessageBox.warning(self, "Export Error", f"Could not export data: {str(e)}")
 
 def main():
+    import sys
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")  # Use Fusion style for a consistent look across platforms
-    
+
     window = BuildingSizeFinderApp()
     window.show()
-    
+
     sys.exit(app.exec())
 
+
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()

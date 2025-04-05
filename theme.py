@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                               QPushButton, QColorDialog, QGroupBox, QFormLayout)
-from PySide6.QtCore import Qt, Signal, QSettings
+from PySide6.QtCore import Signal, QSettings
 from PySide6.QtGui import QIcon, QColor
 
 class ThemeWindow(QDialog):

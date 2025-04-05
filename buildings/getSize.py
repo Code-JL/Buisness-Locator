@@ -1,15 +1,11 @@
 import osmnx as ox
 import geopandas as gpd
 import numpy as np
-from shapely.geometry import Polygon, Point
-import concurrent.futures
 import os
 import hashlib
 import pickle
 import time
 from pathlib import Path
-import math
-import random
 from functools import wraps
 
 # Set OSMnx cache directory and configure using the updated API
@@ -89,7 +85,6 @@ def with_endpoint_fallback(func):
                 # Mark endpoint as not working if it's a connection issue
                 if "connection" in str(e).lower() or "timeout" in str(e).lower():
                     endpoint_status[endpoint] = False
-                    print(f"Marking endpoint {endpoint} as unavailable due to: {str(e)}")
         
         # If we get here, all endpoints failed
         error_details = "; ".join([f"{ep}: {err}" for ep, err in errors.items()])
@@ -157,7 +152,6 @@ def get_buildings_by_size(longitude, latitude, min_sqft=0, radius=500, timeout=1
         except Exception as e:
             # Check specifically for the InsufficientResponseError
             if "No matching features" in str(e):
-                print(f"No buildings found at ({latitude}, {longitude}) with radius {radius}m")
                 return {"total_buildings": 0, "buildings": []}
             else:
                 # Re-raise other errors
@@ -292,8 +286,6 @@ def get_buildings_by_size(longitude, latitude, min_sqft=0, radius=500, timeout=1
         return result
         
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         return {"error": str(e)}
 
 def normalize_building_type(self, building_type):
@@ -408,18 +400,5 @@ if __name__ == "__main__":
     min_sqft = 5000  # Minimum 5,000 sq ft
     radius = 500     # 500 meters radius
     
-    print(f"Finding buildings with at least {min_sqft} sq ft within {radius}m of ({latitude}, {longitude})")
-    
     # For smaller searches
     result = get_buildings_by_size(longitude, latitude, min_sqft, radius)
-    
-    # For larger searches
-    # result = process_large_area(longitude, latitude, min_sqft, 2000)
-    
-    print(f"Found {result['total_buildings']} buildings")
-    
-    # Print the top 5 largest buildings
-    for i, building in enumerate(result["buildings"][:5]):
-        print(f"{i+1}. {building['sqft']} sq ft at ({building['lat']}, {building['lon']})")
-        print(f"   Type: {building['building_type']}, Name: {building['name']}")
-        print()
